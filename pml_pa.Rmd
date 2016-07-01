@@ -1,0 +1,111 @@
+---
+title: "Practical Machine Learning Project Assignment"
+author: "Rawender Guron"
+date: "1 July 2016"
+output: html_document
+---
+```{r setOptions}
+library(knitr)
+opts_chunk$set(echo = TRUE, message = FALSE, results = "markup", error = TRUE, warning = FALSE)
+```
+
+```{r libPackages}
+library(ggplot2);library(GGally);library(markdown); library(stats)
+library(lattice);library(plyr);library(caret);library(randomForest)
+library(grid); library(graphics);library(gridExtra);library(reshape2)
+library(doParallel); library(gbm)
+```
+
+### Executive Summary
+The HAR (Human Activity Research) dataset contains data recorded by electronic accelerometer sensors worn to belt, arm, dumbbell and forearm of 6 participants while they performed a specific physical activity in 5 specific ways (classe variable). The objective of this practical model building exercise is to construct a predictive model that can correctly classify the activity based on the sensor data predictors. **The final result is a model using random forest algorithm that can classify with out of sample accuracy of more than 99%.**
+
+### Getting and Cleaning the Dataset
+
+The data has been generously made available for the study by http://groupware.les.inf.puc-rio.br/har. The data is in two sets - training https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv and testing https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv. The training dataset has 160 variables. The 52 of the variables are going to be used as predictors in the model and the response variable is 'classe'. The predictors are listed here.
+
+```{r gettingAndCleaningData, fig.height= 16, fig.width=16}
+pml.training <- read.csv("~/MyRwork/Practical Machine Learning/pml-training.csv", stringsAsFactors=FALSE)
+pml.testing <- read.csv("~/MyRwork/Practical Machine Learning/pml-testing.csv", stringsAsFactors=FALSE)
+ml = pml.training[,-1]
+ml = ml[,- grep('(kurtosis|skewness|max|min|amplitude|var|avg|stddev|user|cvtd|new|num|raw)_',names(ml))]
+ml[,"classe"] = factor(ml[,"classe"])
+names(ml[,-53])
+```
+
+### Exploratory Analysis
+
+A check of near zero variance and violin ggplot of all the predictors against 'classe', the response follows.
+
+```{r exploratoryAnalysis, fig.height= 32, fig.width=12}
+nzv <- nearZeroVar(ml,saveMetrics = T)
+if(any(nzv$nzv) | any(nzv$zeroVar)) nzv[nzv$nzv | nzv$zeroVar,] else message("No nearZeroVar variables found")
+g = lapply(names(ml[-53]), function(i)  
+  ggplot(data=ml,aes_string(x="classe",y=i,colour="classe",fill="classe"))
+  + geom_violin() + labs(x="",y="") + theme(legend.position="none")
+  + ggtitle(i))
+grid.arrange(grobs=g,ncol=4,nrow=13)
+```
+
+### Imputation of Outliers
+
+The exploratory analysis reveals some outliers that should be fixed by imputation.
+
+```{r imputeTrain}
+ml[16025,"accel_belt_x"] = NA
+ml[5373,"total_accel_dumbbell"] = NA
+ml[5373,"gyros_dumbbell_x"] = NA
+ml[5373,"gyros_dumbbell_y"] = NA
+ml[5373,"gyros_dumbbell_z"] = NA
+ml[5373,"accel_dumbbell_x"] = NA
+ml[5373,"total_accel_forearm"] = NA
+ml[5373,"gyros_forearm_x"] = NA
+ml[5373,"gyros_forearm_y"] = NA
+ml[5373,"gyros_forearm_z"] = NA
+ml[5373,"accel_forearm_y"] = NA
+ml[9274,"magnet_dumbbell_y"] = NA
+ml[7265,"accel_forearm_x"] = NA
+preObj = preProcess(ml,method = "knnImpute")
+ml = predict(preObj,ml)
+```
+
+### Training the Model
+
+We begin with splitting the training set further to train and evaluate the model. Then we apply random forest to build the model. Thereafter, the model is evaluated against the testing set (internal).
+
+```{r trainModel, fig.height= 4, fig.width=4}
+set.seed(1257)
+inTrain = createDataPartition(ml$classe, p = 0.60, list = F)
+inTrain[inTrain %in% c(5373,7265,9274,16025)]
+ml.train = ml[inTrain,]
+ml.test = ml[-inTrain,]
+cl <- makeCluster(detectCores())
+registerDoParallel(cl)
+
+system.time(fitRF <- train(classe ~ ., data = ml.train, method = "rf"))
+fitRF
+confusionMatrix(fitRF)
+```
+
+### Test the Model
+
+```{r testModel, fig.height= 4, fig.width=4}
+predRF = predict(fitRF,ml.test)
+confusionMatrix(predRF,ml.test$classe)
+```
+
+The model has test error of under 1%. We can reasonably expect out of sample error to be close to, or under, 1%.
+
+### Prediction on Coursera Testing set
+
+```{r predictTest, fig.height= 4, fig.width=4}
+pml.testing = pml.testing[,-1]
+pml.testing = pml.testing[,- grep('(kurtosis|skewness|max|min|amplitude|var|avg|stddev|user|cvtd|new|num|raw)_',names(pml.testing))]
+pml.testing[,"problem_id"] = factor(pml.testing[,"problem_id"])
+pml.testing = predict(preObj, pml.testing)
+predTest = predict(fitRF, pml.testing)
+testResult <- data.frame(problem_id = pml.testing$problem_id, classe = predTest)
+write.csv(testResult, file = "pml_test_answers.csv", row.names=FALSE)
+```
+
+The R markdown file, the HTML file, and the CSV answers file are going to be available on github.
+
